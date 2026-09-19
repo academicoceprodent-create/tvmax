@@ -6,8 +6,8 @@
   if (window.__ventasInstalacionesAppLoaded) return;
   window.__ventasInstalacionesAppLoaded = true;
 
-  const SUPABASE_URL = "https://jsyeczuhdjusbcmpiiyg.supabase.co";
-  const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_5gFuPfsCqONtLc1G_gk-jQ_eUPK30zp";
+  const SUPABASE_URL = "https://mqsocgbgebnkckjdbwdz.supabase.co";
+  const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Zm7b-ThAuJ4I03AiZiDlHg_ITZOQplI";
   const { createClient } = window.supabase;
   const sbClient = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
   const SERVICES = ["Internet", "TV", "Combo", "Otros"];
