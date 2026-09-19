@@ -12,7 +12,7 @@
   const sbClient = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
   const SERVICES = ["Internet", "TV", "Combo", "Otros"];
   const STATES = ["PENDIENTE", "REALIZADA", "CANCELADA"];
-  const ZONES = ["CAUCASIA", "SAN MARCOS", "LA APARTADA", "MONTELIBANO", "BUENAVISTA"];
+  const ZONES = ["CAUCASIA", "SAN MARCOS", "MONTELIBANO", "BUENAVISTA-LA APARTADA", "TODAS"];
   const SURVEY_QUESTIONS = {
     q2_servicio: "¿CÓMO CALIFICA EL SERVICIO PRESTADO POR GRUPO TV MAX?",
     q3_tecnica: "¿CÓMO CALIFICA LA ATENCIÓN PRESTADA POR PARTE DEL ÁREA TÉCNICA DE GRUPO TV MAX AL ACERCARSE A SU RESIDENCIA?",
@@ -388,7 +388,7 @@
       const matchesAdvisor=!advisor||s.asesor_id===advisor;
       const matchesRecommend=!recommend||s.q6_recomendaria===recommend;
       const rawZone=String(s.perfiles?.zona||"").trim().toUpperCase();
-      const matchesZone=!zone||rawZone===zone.toUpperCase()||(zone==="BUENAVISTA"&&rawZone.includes("BUENAVISTA"))||(zone==="LA APARTADA"&&rawZone.includes("LA APARTADA"));
+      const matchesZone=!zone||rawZone===zone.toUpperCase();
       const matchesFrom=!from||String(s.fecha_encuesta||"")>=from;
       const matchesTo=!to||String(s.fecha_encuesta||"")<=to;
       return matchesText&&matchesAdvisor&&matchesRecommend&&matchesZone&&matchesFrom&&matchesTo;
@@ -414,9 +414,9 @@
       const name=[a.nombre,a.apellido].filter(Boolean).join(" ")||a.email||"Asesor";
       return `<div class="survey-advisor-row"><div class="survey-advisor-head"><strong>${escapeHTML(name)}</strong><span>${rows.length} encuesta${rows.length===1?"":"s"} · ${pct}% recomienda</span></div><div class="survey-advisor-track"><span style="width:${pct}%"></span></div></div>`;
     }).join(""):'<p class="muted">No hay asesores registrados.</p>';
-    const zoneCounts={"CAUCASIA":0,"MONTELIBANO":0,"LA APARTADA":0,"BUENAVISTA":0,"SAN MARCOS":0};let sharedZoneCount=0;list.forEach(s=>{const z=String(s.perfiles?.zona||"").trim().toUpperCase();if(z.includes("CAUCASIA"))zoneCounts.CAUCASIA++;else if(z.includes("MONTELIBANO"))zoneCounts.MONTELIBANO++;else if(z==="BUENAVISTA LA APARTADA"||z==="LA APARTADA BUENAVISTA")sharedZoneCount++;else if(z.includes("LA APARTADA"))zoneCounts["LA APARTADA"]++;else if(z.includes("BUENAVISTA"))zoneCounts.BUENAVISTA++;else if(z.includes("SAN MARCOS"))zoneCounts["SAN MARCOS"]++;});
+    const zoneCounts=Object.fromEntries(ZONES.map(z=>[z,0]));list.forEach(s=>{const z=String(s.perfiles?.zona||"").trim().toUpperCase();if(Object.prototype.hasOwnProperty.call(zoneCounts,z))zoneCounts[z]++;});
     const zoneSummary=Object.entries(zoneCounts).map(([z,n])=>`<div class="survey-advisor-row"><div class="survey-advisor-head"><strong>${escapeHTML(z)}</strong><span>${n} encuesta${n===1?"":"s"}</span></div><div class="survey-advisor-track"><span style="width:${total?Math.round(n/total*100):0}%"></span></div></div>`).join("")||'<p class="muted">No hay datos por zona.</p>';
-    id("survey-advisor-chart").insertAdjacentHTML("beforeend",`<div class="survey-zone-summary"><span class="section-kicker">POR ZONA</span><h3>Encuestas realizadas por zona</h3>${zoneSummary}${sharedZoneCount?`<p class="muted">${sharedZoneCount} encuesta${sharedZoneCount===1?"":"s"} pertenece${sharedZoneCount===1?"":"n"} a asesores registrados con zona compartida <strong>BUENAVISTA LA APARTADA</strong>; no se puede repartir entre ambas oficinas sin un dato de oficina en la encuesta.</p>`:""}</div>`);
+    id("survey-advisor-chart").insertAdjacentHTML("beforeend",`<div class="survey-zone-summary"><span class="section-kicker">POR ZONA</span><h3>Encuestas realizadas por zona</h3>${zoneSummary}</div>`);
     tabla.innerHTML=list.length?list.map(s=>{
       const a=s.perfiles||{},name=[a.nombre,a.apellido].filter(Boolean).join(" ")||a.email||"—";
       return `<tr><td>${formatDate(s.fecha_encuesta)}</td><td>${escapeHTML(name)}</td><td>${escapeHTML(s.perfiles?.zona||"—")}</td><td>${escapeHTML(s.codigo_nombre_usuario||"—")}</td><td>${escapeHTML(s.q2_servicio||"—")}</td><td>${escapeHTML(s.observacion_q2||"—")}</td><td>${escapeHTML(s.q3_tecnica||"—")}</td><td>${escapeHTML(s.observacion_q3||"—")}</td><td>${escapeHTML(s.q4_administrativa||"—")}</td><td>${escapeHTML(s.observacion_q4||"—")}</td><td>${escapeHTML(s.q5_agilidad||"—")}</td><td>${escapeHTML(s.q6_recomendaria||"—")}</td><td>${escapeHTML(s.q7_recomendacion||"—")}</td></tr>`;
