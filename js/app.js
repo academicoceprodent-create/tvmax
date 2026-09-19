@@ -12,6 +12,7 @@
   const sbClient = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
   const SERVICES = ["Internet", "TV", "Combo", "Otros"];
   const STATES = ["PENDIENTE", "REALIZADA", "CANCELADA"];
+  const ZONES = ["CAUCASIA", "SAN MARCOS", "LA APARTADA", "MONTELIBANO", "BUENAVISTA"];
   const SURVEY_QUESTIONS = {
     q2_servicio: "¿CÓMO CALIFICA EL SERVICIO PRESTADO POR GRUPO TV MAX?",
     q3_tecnica: "¿CÓMO CALIFICA LA ATENCIÓN PRESTADA POR PARTE DEL ÁREA TÉCNICA DE GRUPO TV MAX AL ACERCARSE A SU RESIDENCIA?",
@@ -106,9 +107,8 @@
   });
 
   function bindEvents() {
-    id("login-form").addEventListener("submit", login); id("register-form").addEventListener("submit", registerAdvisor); id("sale-form").addEventListener("submit", registerSale);
-    id("btn-show-register").addEventListener("click", () => { id("auth-view").classList.add("hidden"); id("register-view").classList.remove("hidden"); });
-    id("btn-back-login").addEventListener("click", showAuthView); id("btn-logout").addEventListener("click", logout);
+    id("login-form").addEventListener("submit", login); id("sale-form").addEventListener("submit", registerSale);
+    id("btn-logout").addEventListener("click", logout);
     id("btn-menu").addEventListener("click", () => id("sidebar").classList.toggle("open")); id("btn-close-menu").addEventListener("click", closeSidebar);
     id("filtroAsesor").addEventListener("input", renderAdvisorTable);
     ["filtroAsesorDesde","filtroAsesorHasta"].forEach(x=>{id(x)?.addEventListener("change",()=>{loadAdvisorSalesForFilters(true).catch(e=>{console.error("No fue posible cargar el periodo del asesor",e);showToast("No fue posible cargar las operaciones del periodo.",true);});});});
@@ -145,22 +145,15 @@
 
   async function login(e) { e.preventDefault(); const email=value("login-email"), password=id("login-password").value; setButtonBusy(e.submitter,true,"Ingresando..."); const {data,error}=await sbClient.auth.signInWithPassword({email,password}); setButtonBusy(e.submitter,false,"Ingresar"); if(error){showToast(authError(error),true);return;} await initializeSession(data.user); }
 
-  async function registerAdvisor(e) {
-    e.preventDefault(); const password=id("reg-password").value, confirm=id("reg-password-confirm").value;
-    if(password!==confirm){showToast("Las contraseñas no coinciden.",true);return;} if(password.length<6){showToast("La contraseña debe tener mínimo 6 caracteres.",true);return;}
-    const payload={nombre:value("reg-nombre"),apellido:value("reg-apellido"),documento:value("reg-documento"),telefono:value("reg-telefono"),zona:"",rol:"asesor"};
-    setButtonBusy(e.submitter,true,"Registrando..."); const {data,error}=await sbClient.auth.signUp({email:value("reg-email"),password,options:{data:payload}}); setButtonBusy(e.submitter,false,"Registrar asesor");
-    if(error){showToast(authError(error),true);return;} id("register-form").reset(); if(data.session){showToast("Asesor registrado correctamente.");await initializeSession(data.user);}else{showToast("Registro creado. Revisa el correo para confirmar la cuenta.");showAuthView();}
-  }
-
   async function initializeSession(user) {
     if(!user?.id)return;
     if(initializingUserId===user.id)return;
     initializingUserId=user.id;
     try{
       currentUser=user;
-      const {data:profile,error}=await sbClient.from("perfiles").select("*").eq("id",user.id).single();
-      if(error){console.error(error);await sbClient.auth.signOut();showToast("No fue posible cargar tu perfil. Ejecuta el SQL actualizado.",true);return;}
+      const {data:profile,error}=await sbClient.from("perfiles").select("*").eq("id",user.id).maybeSingle();
+      if(error){console.error(error);await sbClient.auth.signOut();showToast("No fue posible cargar tu perfil. Revisa la conexión con Supabase.",true);return;}
+      if(!profile){console.error("No existe perfil para el usuario Auth",user.id);await sbClient.auth.signOut();showToast("El usuario existe en Auth, pero no tiene registro en la tabla perfiles. Debes migrar/crear su perfil.",true);return;}
       if(profile.activo === false){await sbClient.auth.signOut();showToast("Tu usuario está inhabilitado. Contacta al administrador.",true);return;}
       currentProfile=profile;
       updateSessionHeader(); buildSidebar();
@@ -356,7 +349,7 @@
       syncAdvisorFilterUI();renderAdmin();
     }));
     syncAdvisorFilterUI();
-    const zone=id("filtroZonaAdmin"),zVal=zone.value;const zones=[...new Set(sales.map(s=>s.zona).filter(Boolean))].sort((a,b)=>a.localeCompare(b));zone.innerHTML='<option value="">Todas las zonas</option>'+zones.map(z=>`<option>${escapeHTML(z)}</option>`).join("");zone.value=zVal;
+    const zone=id("filtroZonaAdmin"),zVal=zone.value;const zones=ZONES;zone.innerHTML='<option value="">Todas las zonas</option>'+zones.map(z=>`<option value="${escapeHTML(z)}">${escapeHTML(z)}</option>`).join("");zone.value=ZONES.includes(zVal)?zVal:"";
   }
   function syncAdvisorFilterUI(){
     const btn=id("filtroAsesorAdminBtn"); if(!btn)return;
@@ -506,10 +499,10 @@
 
   async function saveAdminUser(e){e.preventDefault();const idUser=id("admin-user-id").value;const body={nombre:value("admin-user-nombre"),apellido:value("admin-user-apellido"),documento:value("admin-user-documento"),telefono:value("admin-user-telefono"),zona:value("admin-user-zona"),email:value("admin-user-email"),meta_mensual:Math.max(1,Number(id("admin-user-meta").value)||50)};if(!idUser){const password=id("admin-user-password").value;if(password.length<6){showToast("La contraseña debe tener mínimo 6 caracteres.",true);return;}const {data:{session}}=await sbClient.auth.getSession();if(!session){showToast("Sesión no disponible.",true);return;}const result=await fetchAdminFunction("create",{...body,password});if(result.error){showToast(result.error,true);return;}showToast("Asesor creado correctamente.");resetUserForm();await loadAdminData();return;}const result=await fetchAdminFunction("update",{user_id:idUser,...body});if(result.error){showToast(result.error,true);return;}showToast("Asesor actualizado.");resetUserForm();await loadAdminData();}
   async function fetchAdminFunction(action,payload){const {data:{session}}=await sbClient.auth.getSession();if(!session)return{error:"Sesión no disponible."};try{const r=await fetch(`${SUPABASE_URL}/functions/v1/admin-users`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${session.access_token}`},body:JSON.stringify({action,...payload})});const j=await r.json().catch(()=>({}));return r.ok?{data:j}:{error:j.error||`Error ${r.status}`};}catch(e){return{error:"No se pudo contactar la función de administración. Debes desplegar supabase/functions/admin-users."};}}
-  function editAdvisor(uid){const a=advisors.find(x=>x.id===uid);if(!a)return;id("admin-user-id").value=a.id;["nombre","apellido","documento","telefono","zona","email"].forEach(k=>id(`admin-user-${k}`).value=a[k]||"");id("admin-user-meta").value=Number(a.meta_mensual)||50;id("admin-user-password").value="";id("btn-save-user").textContent="Actualizar asesor";id("btn-cancel-user-edit").classList.remove("hidden");document.getElementById("vista-usuarios").scrollIntoView({behavior:"smooth"});}
+  function editAdvisor(uid){const a=advisors.find(x=>x.id===uid);if(!a)return;id("admin-user-id").value=a.id;["nombre","apellido","documento","telefono","email"].forEach(k=>id(`admin-user-${k}`).value=a[k]||"");id("admin-user-zona").value=ZONES.includes(a.zona)?a.zona:"";id("admin-user-meta").value=Number(a.meta_mensual)||50;id("admin-user-password").value="";id("btn-save-user").textContent="Actualizar asesor";id("btn-cancel-user-edit").classList.remove("hidden");document.getElementById("vista-usuarios").scrollIntoView({behavior:"smooth"});}
   async function toggleAdvisor(uid,active){const {error}=await sbClient.from("perfiles").update({activo:!active}).eq("id",uid);if(error){showToast(error.message,true);return;}showToast(active?"Asesor inhabilitado.":"Asesor habilitado.");await loadAdminData();}
   async function deleteAdvisor(uid){const a=advisors.find(x=>x.id===uid);if(!a)return;if(!confirm(`¿Eliminar a ${[a.nombre,a.apellido].filter(Boolean).join(" ")||a.email}? Solo se podrá eliminar si no tiene operaciones registradas.`))return;const result=await fetchAdminFunction("delete",{user_id:uid});if(result.error){showToast(result.error,true);return;}showToast("Asesor eliminado.");await loadAdminData();}
-  function resetUserForm(){id("admin-user-form").reset();id("admin-user-id").value="";id("admin-user-meta").value=50;id("btn-save-user").textContent="Crear asesor";id("btn-cancel-user-edit").classList.add("hidden");}
+  function resetUserForm(){id("admin-user-form").reset();id("admin-user-id").value="";id("admin-user-zona").value="";id("admin-user-meta").value=50;id("btn-save-user").textContent="Crear asesor";id("btn-cancel-user-edit").classList.add("hidden");}
 
   async function saveConfig(e){e.preventDefault();let logo=config.logo_url||"";const file=id("config-logo").files[0];if(file){if(file.size>2*1024*1024){showToast("La imagen debe pesar máximo 2 MB.",true);return;}const ext=(file.name.split(".").pop()||"png").toLowerCase();const path=`tvmax/logo-${Date.now()}.${ext}`;const up=await sbClient.storage.from("app-assets").upload(path,file,{cacheControl:"31536000",upsert:false,contentType:file.type});if(up.error){showToast(`No fue posible almacenar el logo: ${up.error.message}`,true);return;}logo=sbClient.storage.from("app-assets").getPublicUrl(path).data.publicUrl;}const color=id("config-color").value;const {error}=await sbClient.from("configuracion").upsert({id:1,color_principal:color,logo_url:logo,updated_by:currentUser.id},{onConflict:"id"});if(error){showToast(error.message,true);return;}config={color_principal:color,logo_url:logo};cacheSet("config:tvmax",config);applyTheme();renderConfig();showToast("Configuración guardada. El logo ahora usa almacenamiento y caché del navegador.");}
   async function removeLogo(){const {error}=await sbClient.from("configuracion").upsert({id:1,color_principal:config.color_principal,logo_url:"",updated_by:currentUser.id},{onConflict:"id"});if(error){showToast(error.message,true);return;}cacheInvalidate("config:tvmax");config.logo_url="";renderConfig();showToast("Imagen retirada del reporte.");}
@@ -687,7 +680,7 @@
   function populateSurveyZoneFilter(){
     const el=id("filtroEncuestaZona");if(!el)return;
     const selected=el.value;
-    const zones=["CAUCASIA","MONTELIBANO","LA APARTADA","BUENAVISTA","SAN MARCOS"];
+    const zones=ZONES;
     el.innerHTML='<option value="">Todas las zonas</option>'+zones.map(z=>`<option value="${escapeHTML(z)}">${escapeHTML(z)}</option>`).join("");
     el.value=zones.includes(selected)?selected:"";
   }
@@ -833,8 +826,8 @@
     }catch(e){console.error(e);showToast("No fue posible generar el Excel.",true);}
   }
 
-  function showAuthView(){["auth-view","register-view","vista-asesor","admin-dashboard","vista-admin","vista-usuarios","vista-configuracion"].forEach(x=>id(x).classList.add("hidden"));id("auth-view").classList.remove("hidden");id("session-area").classList.add("hidden");id("btn-menu").classList.add("hidden");id("sidebar").classList.add("hidden");}
-  function showView(viewId){["auth-view","register-view","vista-asesor","vista-encuestas","admin-dashboard","vista-admin","vista-reporte-encuestas","vista-usuarios","vista-configuracion","vista-respaldo"].forEach(x=>id(x).classList.add("hidden"));id(viewId).classList.remove("hidden");if(viewId!=="auth-view"&&currentProfile){id("session-area").classList.remove("hidden");id("btn-menu").classList.remove("hidden");id("sidebar").classList.remove("hidden");}if(viewId==="vista-admin")loadAdvisorsForFilters();
+  function showAuthView(){["auth-view","vista-asesor","admin-dashboard","vista-admin","vista-usuarios","vista-configuracion"].forEach(x=>id(x).classList.add("hidden"));id("auth-view").classList.remove("hidden");id("session-area").classList.add("hidden");id("btn-menu").classList.add("hidden");id("sidebar").classList.add("hidden");}
+  function showView(viewId){["auth-view","vista-asesor","vista-encuestas","admin-dashboard","vista-admin","vista-reporte-encuestas","vista-usuarios","vista-configuracion","vista-respaldo"].forEach(x=>id(x).classList.add("hidden"));id(viewId).classList.remove("hidden");if(viewId!=="auth-view"&&currentProfile){id("session-area").classList.remove("hidden");id("btn-menu").classList.remove("hidden");id("sidebar").classList.remove("hidden");}if(viewId==="vista-admin")loadAdvisorsForFilters();
     if(viewId==="vista-reporte-encuestas"){ensureSurveyZoneFilter();loadSurveyReportData().catch(e=>{console.error("No fue posible cargar el reporte de encuestas",e);showToast("No fue posible cargar el reporte de encuestas. Revisa tu conexión o los permisos.",true);});}
   }
   async function logout(){const {error}=await sbClient.auth.signOut();if(error)showToast("No fue posible cerrar la sesión.",true);}
@@ -873,7 +866,7 @@
     finally{setButtonBusy(btn,false,"⭳ Descargar respaldo completo");}
   }
 
-  function setButtonBusy(b,busy,text){if(!b)return;b.disabled=busy;b.textContent=text;}function authError(e){const m=(e?.message||"").toLowerCase();if(m.includes("invalid login credentials"))return "Correo o contraseña incorrectos.";if(m.includes("email not confirmed"))return "Debes confirmar tu correo antes de iniciar sesión.";if(m.includes("user already registered"))return "Ese correo ya está registrado.";return e?.message||"No fue posible completar la operación.";}
+  function setButtonBusy(b,busy,text){if(!b)return;b.disabled=busy;b.textContent=text;}function authError(e){const m=(e?.message||"").toLowerCase();if(m.includes("invalid login credentials"))return "Correo o contraseña incorrectos.";if(m.includes("email not confirmed"))return "Esta cuenta aún no está confirmada. Contacta al administrador.";if(m.includes("user already registered"))return "Ese correo ya está registrado.";return e?.message||"No fue posible completar la operación.";}
   function fileToDataURL(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(file);});}
   let toastTimer;function showToast(msg,error=false){const t=id("toast");t.textContent=msg;t.classList.toggle("error",error);t.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove("show"),3500);}
 
