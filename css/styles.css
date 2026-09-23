@@ -204,6 +204,7 @@ button:disabled { opacity: .65; cursor: wait; }
   margin-bottom: 1.25rem;
 }
 .admin-stats { grid-template-columns: repeat(6, minmax(0,1fr)); }
+.advisor-stats { grid-template-columns: repeat(5, minmax(0,1fr)); }
 
 .stat-card {
   padding: 1.15rem;
@@ -318,7 +319,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .print-only { display: none; }
 
 @media (max-width: 1100px) {
-  .stats-grid, .admin-stats { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .stats-grid, .admin-stats, .advisor-stats { grid-template-columns: repeat(2, minmax(0,1fr)); }
   .sale-grid, .filters-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
   .form-group-wide { grid-column: span 2; }
 }
@@ -327,7 +328,7 @@ tbody tr:last-child td { border-bottom: 0; }
   .navbar { align-items: flex-start; flex-direction: column; }
   .session-area { width: 100%; justify-content: space-between; }
   .container { width: min(100% - 20px, 1500px); margin-top: 1rem; }
-  .stats-grid, .admin-stats, .sale-grid, .register-grid, .filters-grid { grid-template-columns: 1fr; }
+  .stats-grid, .admin-stats, .advisor-stats, .sale-grid, .register-grid, .filters-grid { grid-template-columns: 1fr; }
   .form-group-wide { grid-column: span 1; }
   .form-actions { flex-direction: column-reverse; align-items: stretch; }
   .form-actions .btn-primary, .form-actions .btn-secondary { width: 100%; }

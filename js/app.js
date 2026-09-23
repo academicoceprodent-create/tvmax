@@ -10,7 +10,7 @@
   const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Zm7b-ThAuJ4I03AiZiDlHg_ITZOQplI";
   const { createClient } = window.supabase;
   const sbClient = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
-  const SERVICES = ["Internet", "TV", "Combo", "Otros"];
+  const SERVICES = ["Internet", "TV", "Combo", "Reconexión", "Otros"];
   const STATES = ["PENDIENTE", "REALIZADA", "CANCELADA"];
   const ZONES = ["CAUCASIA", "SAN MARCOS", "MONTELIBANO", "BUENAVISTA-LA APARTADA", "TODAS"];
   const SURVEY_QUESTIONS = {
@@ -173,23 +173,12 @@
   }
   async function loadConfig(){const key="config:tvmax";const cached=cacheGet(key);if(cached){config=cached;applyTheme();renderConfig();return;}const {data,error}=await sbClient.from("configuracion").select("color_principal,logo_url").eq("id",1).maybeSingle();if(!error&&data){config=data;cacheSet(key,config);if(currentProfile?.rol==="administrador"&&String(data.logo_url||"").startsWith("data:image/"))migrateLegacyLogo(data.logo_url);}applyTheme();renderConfig();}
   async function migrateLegacyLogo(dataUrl){try{const blob=await fetch(dataUrl).then(r=>r.blob());const ext=(blob.type.split("/")[1]||"png").replace("jpeg","jpg");const path=`tvmax/logo-${Date.now()}.${ext}`;const up=await sbClient.storage.from("app-assets").upload(path,blob,{cacheControl:"31536000",upsert:false,contentType:blob.type});if(up.error)return;const url=sbClient.storage.from("app-assets").getPublicUrl(path).data.publicUrl;const r=await sbClient.from("configuracion").update({logo_url:url,updated_by:currentUser.id}).eq("id",1);if(!r.error){config.logo_url=url;cacheSet("config:tvmax",config);renderConfig();}}catch(e){console.warn("No fue posible migrar el logo anterior al Storage",e);}}
-  // Pendientes = SOLO ventas con instalación PENDIENTE del mes (sin reconexiones ni otros).
-  // Se calcula aquí (no depende de lo que devuelva el RPC) y aplica igual a administrador y asesor.
-  async function applyPendingSales(result){
-    if(!result)return result;
-    const inicio=monthStartISO(),fin=nextMonthStartISO();
-    const r=await sbClient.from("ventas").select("asesor_id").eq("tipo_operacion","Venta").eq("estado_instalacion","PENDIENTE").gte("fecha_venta",inicio).lt("fecha_venta",fin).limit(5000);
-    if(r.error){console.warn("No se pudieron contar las ventas pendientes",r.error);return result;}
-    const rows=r.data||[];
-    result.pendientes=rows.length;
-    if(Array.isArray(result.asesores))result.asesores.forEach(a=>{a.pendientes=rows.filter(x=>x.asesor_id===a.id).length;});
-    return result;
-  }
   async function loadMonthlyDashboard(force=false){
-    const key=`dashboard:tvmax:v3:${currentUser.id}:${monthStartISO()}`;
+    const key=`dashboard:tvmax:v5:${currentUser.id}:${monthStartISO()}`;
     if(force)cacheInvalidate(key);else{const cached=cacheGet(key);if(cached!==null)return cached;}
+    // Pendientes = SOLO ventas con instalación PENDIENTE del mes (sin reconexiones ni otros); ya lo calcula el RPC.
     const {data,error}=await sbClient.rpc("dashboard_tvmax_mensual",{p_month_start:monthStartISO()});
-    if(!error&&data){await applyPendingSales(data);cacheSet(key,data);return data;}
+    if(!error&&data){cacheSet(key,data);return data;}
     console.warn("RPC dashboard_tvmax_mensual no disponible; usando consulta mensual de respaldo",error);
     const inicio=monthStartISO();
     const fin=new Date(); fin.setMonth(fin.getMonth()+1); fin.setDate(0);
@@ -200,9 +189,17 @@
     ]);
     if(vr.error){console.error(vr.error);return null;}
     const rows=vr.data||[], profiles=ar.data||[];
-    const services={}; rows.forEach(x=>{if(x.servicio)services[x.servicio]=(services[x.servicio]||0)+1;});
-    const isV=x=>x.tipo_operacion==="Venta",isR=x=>x.tipo_operacion==="Reconexión";
-    const result={total:rows.length,ventas:rows.filter(isV).length,reconexiones:rows.filter(isR).length,pendientes:rows.filter(x=>isV(x)&&x.estado_instalacion==="PENDIENTE").length,realizadas:rows.filter(x=>x.estado_instalacion==="REALIZADA").length,canceladas:rows.filter(x=>x.estado_instalacion==="CANCELADA").length,servicios:services,asesores:profiles.map(a=>{const mine=rows.filter(x=>x.asesor_id===a.id);return {id:a.id,nombre:a.nombre,apellido:a.apellido,email:a.email,meta:Number(a.meta_mensual)||50,total:mine.length,ventas:mine.filter(isV).length,reconexiones:mine.filter(isR).length,pendientes:mine.filter(x=>isV(x)&&x.estado_instalacion==="PENDIENTE").length,realizadas_estado:mine.filter(x=>x.estado_instalacion==="REALIZADA").length,realizadas:mine.filter(x=>isV(x)||isR(x)).length};})};
+    const isV=x=>x.tipo_operacion==="Venta",isR=x=>x.tipo_operacion==="Reconexión",isO=x=>x.tipo_operacion==="Otros";
+    // Distribución de servicios: Internet/TV/Combo SOLO cuentan ventas (tipo_operacion="Venta") por su campo servicio.
+    // Reconexiones y Otros se cuentan aparte por tipo_operacion, sin importar el servicio.
+    const services={
+      "Internet": rows.filter(x=>isV(x)&&x.servicio==="Internet").length,
+      "TV": rows.filter(x=>isV(x)&&x.servicio==="TV").length,
+      "Combo": rows.filter(x=>isV(x)&&x.servicio==="Combo").length,
+      "Reconexión": rows.filter(isR).length,
+      "Otros": rows.filter(isO).length
+    };
+    const result={total:rows.length,ventas:rows.filter(isV).length,reconexiones:rows.filter(isR).length,pendientes:rows.filter(x=>isV(x)&&x.estado_instalacion==="PENDIENTE").length,realizadas:rows.filter(x=>x.estado_instalacion==="REALIZADA").length,canceladas:rows.filter(x=>x.estado_instalacion==="CANCELADA").length,servicios:services,asesores:profiles.map(a=>{const mine=rows.filter(x=>x.asesor_id===a.id);return {id:a.id,nombre:a.nombre,apellido:a.apellido,email:a.email,meta:Number(a.meta_mensual)||50,total:mine.length,ventas:mine.filter(isV).length,reconexiones:mine.filter(isR).length,pendientes:mine.filter(x=>isV(x)&&x.estado_instalacion==="PENDIENTE").length,realizadas_estado:mine.filter(x=>isV(x)&&x.estado_instalacion==="REALIZADA").length,realizadas:mine.filter(x=>isV(x)||isR(x)).length};})};
     cacheSet(key,result);return result;
   }
   async function loadTodaySalesData(){const today=getTodayISO(),uid=currentUser.id;const [sr,qr,dashboard]=await Promise.all([
@@ -352,8 +349,9 @@
   }
   function updateAdvisorDashboard(monthlyAdvisor=null){
     updateAdvisorStats(monthlyAdvisor);
-    const meta=Math.max(1,Number(monthlyAdvisor?.meta)||Number(currentProfile?.meta_mensual)||50),made=Number(monthlyAdvisor?.realizadas)||0,pct=Math.min(100,Math.round(made/meta*100));
-    setText("asesor-goal-title",`${made} / ${meta} operaciones`);
+    // La meta mensual del asesor cuenta SOLO ventas (igual que la meta del administrador), no reconexiones.
+    const meta=Math.max(1,Number(monthlyAdvisor?.meta)||Number(currentProfile?.meta_mensual)||50),made=Number(monthlyAdvisor?.ventas)||0,pct=Math.min(100,Math.round(made/meta*100));
+    setText("asesor-goal-title",`${made} / ${meta} ventas`);
     setText("asesor-goal-detail",`Avance mensual · ${new Date().toLocaleDateString("es-CO",{month:"long",year:"numeric"})}. Las tarjetas muestran el acumulado del mes.`);
     if(id("asesor-goal-bar"))id("asesor-goal-bar").style.width=`${pct}%`;setText("asesor-goal-percent",`${pct}%`);
   }
