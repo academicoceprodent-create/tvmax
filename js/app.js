@@ -84,6 +84,7 @@
   function cacheInvalidate(prefix){for(const key of memoryCache.keys())if(key.startsWith(prefix))memoryCache.delete(key);try{for(let i=localStorage.length-1;i>=0;i--){const k=localStorage.key(i)||'';if(k.startsWith(`tvmax-cache:${prefix}`))localStorage.removeItem(k);}}catch(e){}}
   async function cachedQuery(key,queryFn){const cached=cacheGet(key);if(cached!==null)return cached;if(pendingCache.has(key))return pendingCache.get(key);const promise=(async()=>{const data=await queryFn();cacheSet(key,data);return data;})().finally(()=>pendingCache.delete(key));pendingCache.set(key,promise);return promise;}
   function monthStartISO(){const n=new Date();return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-01`;}
+  function nextMonthStartISO(){const n=new Date(),d=new Date(n.getFullYear(),n.getMonth()+1,1);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`;}
   let currentUser = null, currentProfile = null, sales = [], advisors = [], surveys = [], surveyReportData = [], config = { color_principal: "#8b5cf6", logo_url: "" };
   let initializingUserId = null;
   let salesRealtimeChannel = null;
@@ -172,11 +173,23 @@
   }
   async function loadConfig(){const key="config:tvmax";const cached=cacheGet(key);if(cached){config=cached;applyTheme();renderConfig();return;}const {data,error}=await sbClient.from("configuracion").select("color_principal,logo_url").eq("id",1).maybeSingle();if(!error&&data){config=data;cacheSet(key,config);if(currentProfile?.rol==="administrador"&&String(data.logo_url||"").startsWith("data:image/"))migrateLegacyLogo(data.logo_url);}applyTheme();renderConfig();}
   async function migrateLegacyLogo(dataUrl){try{const blob=await fetch(dataUrl).then(r=>r.blob());const ext=(blob.type.split("/")[1]||"png").replace("jpeg","jpg");const path=`tvmax/logo-${Date.now()}.${ext}`;const up=await sbClient.storage.from("app-assets").upload(path,blob,{cacheControl:"31536000",upsert:false,contentType:blob.type});if(up.error)return;const url=sbClient.storage.from("app-assets").getPublicUrl(path).data.publicUrl;const r=await sbClient.from("configuracion").update({logo_url:url,updated_by:currentUser.id}).eq("id",1);if(!r.error){config.logo_url=url;cacheSet("config:tvmax",config);renderConfig();}}catch(e){console.warn("No fue posible migrar el logo anterior al Storage",e);}}
+  // Pendientes = SOLO ventas con instalación PENDIENTE del mes (sin reconexiones ni otros).
+  // Se calcula aquí (no depende de lo que devuelva el RPC) y aplica igual a administrador y asesor.
+  async function applyPendingSales(result){
+    if(!result)return result;
+    const inicio=monthStartISO(),fin=nextMonthStartISO();
+    const r=await sbClient.from("ventas").select("asesor_id").eq("tipo_operacion","Venta").eq("estado_instalacion","PENDIENTE").gte("fecha_venta",inicio).lt("fecha_venta",fin).limit(5000);
+    if(r.error){console.warn("No se pudieron contar las ventas pendientes",r.error);return result;}
+    const rows=r.data||[];
+    result.pendientes=rows.length;
+    if(Array.isArray(result.asesores))result.asesores.forEach(a=>{a.pendientes=rows.filter(x=>x.asesor_id===a.id).length;});
+    return result;
+  }
   async function loadMonthlyDashboard(force=false){
-    const key=`dashboard:tvmax:v2:${currentUser.id}:${monthStartISO()}`;
+    const key=`dashboard:tvmax:v3:${currentUser.id}:${monthStartISO()}`;
     if(force)cacheInvalidate(key);else{const cached=cacheGet(key);if(cached!==null)return cached;}
     const {data,error}=await sbClient.rpc("dashboard_tvmax_mensual",{p_month_start:monthStartISO()});
-    if(!error&&data){cacheSet(key,data);return data;}
+    if(!error&&data){await applyPendingSales(data);cacheSet(key,data);return data;}
     console.warn("RPC dashboard_tvmax_mensual no disponible; usando consulta mensual de respaldo",error);
     const inicio=monthStartISO();
     const fin=new Date(); fin.setMonth(fin.getMonth()+1); fin.setDate(0);
@@ -188,7 +201,8 @@
     if(vr.error){console.error(vr.error);return null;}
     const rows=vr.data||[], profiles=ar.data||[];
     const services={}; rows.forEach(x=>{if(x.servicio)services[x.servicio]=(services[x.servicio]||0)+1;});
-    const result={total:rows.length,ventas:rows.filter(x=>x.tipo_operacion==="Venta").length,reconexiones:rows.filter(x=>x.tipo_operacion==="Reconexión").length,pendientes:rows.filter(x=>x.estado_instalacion==="PENDIENTE").length,realizadas:rows.filter(x=>x.estado_instalacion==="REALIZADA").length,canceladas:rows.filter(x=>x.estado_instalacion==="CANCELADA").length,servicios:services,asesores:profiles.map(a=>({id:a.id,nombre:a.nombre,apellido:a.apellido,email:a.email,meta:Number(a.meta_mensual)||50,realizadas:rows.filter(x=>x.asesor_id===a.id&&(x.tipo_operacion==="Venta"||x.tipo_operacion==="Reconexión")).length}))};
+    const isV=x=>x.tipo_operacion==="Venta",isR=x=>x.tipo_operacion==="Reconexión";
+    const result={total:rows.length,ventas:rows.filter(isV).length,reconexiones:rows.filter(isR).length,pendientes:rows.filter(x=>isV(x)&&x.estado_instalacion==="PENDIENTE").length,realizadas:rows.filter(x=>x.estado_instalacion==="REALIZADA").length,canceladas:rows.filter(x=>x.estado_instalacion==="CANCELADA").length,servicios:services,asesores:profiles.map(a=>{const mine=rows.filter(x=>x.asesor_id===a.id);return {id:a.id,nombre:a.nombre,apellido:a.apellido,email:a.email,meta:Number(a.meta_mensual)||50,total:mine.length,ventas:mine.filter(isV).length,reconexiones:mine.filter(isR).length,pendientes:mine.filter(x=>isV(x)&&x.estado_instalacion==="PENDIENTE").length,realizadas_estado:mine.filter(x=>x.estado_instalacion==="REALIZADA").length,realizadas:mine.filter(x=>isV(x)||isR(x)).length};})};
     cacheSet(key,result);return result;
   }
   async function loadTodaySalesData(){const today=getTodayISO(),uid=currentUser.id;const [sr,qr,dashboard]=await Promise.all([
@@ -288,7 +302,7 @@
     salesRealtimeChannel=sbClient.channel(`tvmax-ventas-${currentUser.id}`)
       .on("postgres_changes",{event:"*",schema:"public",table:"ventas"},async(payload)=>{
         cacheInvalidate(`dashboard:tvmax:${currentUser.id}:`);
-        cacheInvalidate(`dashboard:tvmax:v2:${currentUser.id}:`);
+        cacheInvalidate(`dashboard:tvmax:v3:${currentUser.id}:`);
         const affected=payload.new||payload.old||{};
         const mine=currentProfile?.rol==="asesor"&&String(affected.asesor_id||"")===String(currentUser.id);
         const today=getTodayISO();
@@ -316,7 +330,7 @@
     const i=sales.findIndex(x=>x.id===data.id);if(i>=0)sales[i]=data;
     renderAdmin();
     cacheInvalidate(`dashboard:tvmax:${currentUser?.id||""}:`);
-    cacheInvalidate(`dashboard:tvmax:v2:${currentUser?.id||""}:`);
+    cacheInvalidate(`dashboard:tvmax:v3:${currentUser?.id||""}:`);
     const dashboard=await loadMonthlyDashboard(true);
     if(dashboard)updateAdminDashboard(dashboard);
   }
@@ -333,8 +347,8 @@
   function renderAdvisorTable(){const tabla=id("tabla-asesor"),filtered=getFilteredAdvisorSales();tabla.innerHTML=filtered.length?filtered.map(s=>`<tr><td>#${s.id}</td><td>${operationBadge(s.tipo_operacion)}</td><td>${escapeHTML(s.codigo_cliente)}</td><td>${serviceBadge(s.servicio)}</td><td>${escapeHTML(s.descripcion_servicio)}</td><td>${escapeHTML(s.zona)}</td><td>${formatDate(s.fecha_venta)}</td><td>${installationStatus(s.estado_instalacion)}</td><td>${formatDate(s.fecha_instalacion)}</td></tr>`).join(""):`<tr class="empty-row"><td colspan="9">${sales.length?"No se encontraron operaciones.":"No hay operaciones registradas."}</td></tr>`;}
   function updateAdvisorStats(monthlyAdvisor=null){
     const m=monthlyAdvisor||{};
-    const total=Number(m.total)||0,ventas=Number(m.ventas)||0,recon=Number(m.reconexiones)||0,real=Number(m.realizadas_estado)||0;
-    setText("asesor-total-count",total);setText("asesor-ventas-count",ventas);setText("asesor-reconexion-count",recon);setText("asesor-complete-count",real);
+    const total=Number(m.total)||0,ventas=Number(m.ventas)||0,recon=Number(m.reconexiones)||0,real=Number(m.realizadas_estado)||0,pend=Number(m.pendientes)||0;
+    setText("asesor-pendientes-count",pend);setText("asesor-total-count",total);setText("asesor-ventas-count",ventas);setText("asesor-reconexion-count",recon);setText("asesor-complete-count",real);
   }
   function updateAdvisorDashboard(monthlyAdvisor=null){
     updateAdvisorStats(monthlyAdvisor);
